@@ -61,8 +61,7 @@ namespace cAlgo
             try
             {
                 dbConn.Open();
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 MyErrorHandler(this, ex, "OnStart()");
                 Print("Database cannot be opened => Robot will be stopped...");
@@ -82,17 +81,16 @@ namespace cAlgo
                     cmd.Connection = dbConn;
                     cmd.CommandText = "SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = '" + dbSchema + "' AND tablename = '" + Symbol.Code.ToLower() + "')";
                     Print("SQL> " + cmd.CommandText);
-                    bool tableExiting = (bool)cmd.ExecuteScalar();
-                    Print("SQL query result: " + tableExiting.ToString());
-                    if (!tableExiting)
+                    bool tableExisting = (bool)cmd.ExecuteScalar();
+                    Print("SQL query result: " + tableExisting.ToString());
+                    if (!tableExisting)
                     {
                         cmd.CommandText = "CREATE TABLE " + dbSchema + "." + Symbol.Code.ToLower() + " (\"utc\" timestamp without time zone, \"tick\" bigint, \"ask\" real, \"bid\" real, \"spread\" real)";
                         Print("SQL> " + cmd.CommandText);
                         cmd.ExecuteNonQuery();
                     }
                 }
-            }
-            catch (Exception ex)
+            } catch (Exception ex)
             {
                 MyErrorHandler(this, ex, "OnStart()");
                 Print("Database problems => Robot will be stopped...");
