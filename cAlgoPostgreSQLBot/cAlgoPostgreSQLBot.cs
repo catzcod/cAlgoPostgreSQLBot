@@ -1,9 +1,7 @@
-﻿using System;
-using System.Linq;
+using System;
+using System.Reflection.Metadata;
 using cAlgo.API;
-using cAlgo.API.Indicators;
 using cAlgo.API.Internals;
-using cAlgo.Indicators;
 using Npgsql;
 
 namespace cAlgo
@@ -15,22 +13,16 @@ namespace cAlgo
         string dbName = "fxhistory";
         string dbHost = "localhost";
         int dbPort = 5432;
-        string dbUser = "testuser";
+        string dbUser = "test";
         string dbPass = "test";
         string dbSchema = "public";
         //
         // Globals
         //
-        NpgsqlConnection dbConn;
-        // Diagnostic counter for ticks 1-2-3-4-1-2-etc
-        int diagTicks;
+        NpgsqlDataSource dataSource;
+        int diagTicks; // Diagnostic counter for ticks 1-2-3-4-1-2-etc
 
-        /// <summary>
-        /// Prints exception details into cBot Log
-        /// </summary>
-        /// <param name="sender"></param>
-        /// <param name="ex"></param>
-        /// <param name="myRoutine"></param>
+        // Prints exception details into cBot Log
         private void MyErrorHandler(Object sender, Exception ex, string myRoutine)
         {
             string senderString;
@@ -41,123 +33,86 @@ namespace cAlgo
             Print("(EE) Routine: " + myRoutine + " Sender:  " + senderString + " Details:" + ex.ToString());
         }
 
-        /// <summary>
-        /// Bot start routine. Put your initialization logic here.
-        /// </summary>
+        // Bot start routine. Put your initialization logic here.
         protected override void OnStart()
         {
-            Print("Starting with symbol code: " + Symbol.Code);
-            // Try to connect to DB
-            NpgsqlConnectionStringBuilder sb = new NpgsqlConnectionStringBuilder();
-            sb.Host = dbHost;
-            sb.Port = dbPort;
-            sb.Database = dbName;
-            sb.Username = dbUser;
-            sb.Password = dbPass;
-            sb.Timeout = 5;
-            sb.CommandTimeout = 5;
+            Print("Starting with symbol code: " + Symbol.Name);
+            // Build database connection string
+            NpgsqlConnectionStringBuilder sb = new()
+            {
+                Host = dbHost,
+                Port = dbPort,
+                Database = dbName,
+                Username = dbUser,
+                Password = dbPass,
+                Timeout = 5,
+                CommandTimeout = 5
+            };
             Print("Database connection string: " + sb.ConnectionString);
-            dbConn = new NpgsqlConnection(sb.ConnectionString);
+            dataSource = NpgsqlDataSource.Create(sb.ConnectionString);
+
             try
             {
-                dbConn.Open();
-            } catch (Exception ex)
-            {
-                MyErrorHandler(this, ex, "OnStart()");
-                Print("Database cannot be opened => Robot will be stopped...");
-                Stop();
-            }
-            Print("DB connection: " + dbConn.FullState.ToString());
-            // Information_schema: Whether a table (or view) exists, and the current user has access to it?
-            // SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE  table_schema = 'schema_name' AND table_name = 'table_name');
-            // System catalog: How to check whether a table exists?
-            // SELECT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'schema_name' AND tablename = 'table_name');
-            // Create table if not existing
-            // CREATE TABLE public.table_name ("column_name" column_type, etc...)
-            try
-            {
-                using (NpgsqlCommand cmd = new NpgsqlCommand())
+                // Example: SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'audusd')
+                string commandText = "SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = '" + dbSchema + "' AND tablename = '" + Symbol.Name.ToLower() + "')";
+                Print("SQL> " + commandText);
+                NpgsqlCommand cmd = dataSource.CreateCommand(commandText);
+                bool tableExisting = (bool)cmd.ExecuteScalar();
+                Print("SQL query result: " + tableExisting.ToString());
+                if (!tableExisting)
                 {
-                    cmd.Connection = dbConn;
-                    cmd.CommandText = "SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = '" + dbSchema + "' AND tablename = '" + Symbol.Code.ToLower() + "')";
-                    Print("SQL> " + cmd.CommandText);
-                    bool tableExisting = (bool)cmd.ExecuteScalar();
-                    Print("SQL query result: " + tableExisting.ToString());
-                    if (!tableExisting)
-                    {
-                        cmd.CommandText = "CREATE TABLE " + dbSchema + "." + Symbol.Code.ToLower() + " (\"utc\" timestamp without time zone, \"tick\" bigint, \"ask\" real, \"bid\" real, \"spread\" real)";
-                        Print("SQL> " + cmd.CommandText);
-                        cmd.ExecuteNonQuery();
-                    }
+                    // Example: CREATE TABLE public.audusd ("id" bigserial, "utc" timestamp without time zone, "tick" bigint, "ask" real, "bid" real, "spread" real)
+                    commandText = "CREATE TABLE " + dbSchema + "." + Symbol.Name.ToLower() + " (\"id\" bigserial, \"utc\" timestamp without time zone, \"tick\" bigint, \"ask\" real, \"bid\" real, \"spread\" real)";
+                    Print("SQL> " + commandText);
+                    int execResult = cmd.ExecuteNonQuery();
+                    Print("SQL query result: " + execResult.ToString() + " rows affected.");
                 }
-            } catch (Exception ex)
+            } 
+            catch (Exception ex)
             {
                 MyErrorHandler(this, ex, "OnStart()");
                 Print("Database problems => Robot will be stopped...");
-                dbConn.Close();
                 Stop();
             }
         }
 
-        /// <summary>
-        /// Executes every tick. Put your core logic here.
-        /// </summary>
+        // Executes every tick. Put your core logic here.
         protected override void OnTick()
         {
             // Ticks are 100-ns intervals elapsed since January 1, 0001 at 00:00:00.000 in the Gregorian calendar.
             DateTime serverTime = Server.Time;
-            using (NpgsqlCommand cmd = new NpgsqlCommand())
-            {
-                cmd.Connection = dbConn;
-                cmd.CommandText = "INSERT INTO " + dbSchema + "." + Symbol.Code + " (utc, tick, ask, bid, spread) VALUES (:utc, :tick, :ask, :bid, :spread)";
-                cmd.Parameters.AddWithValue(":utc", NpgsqlTypes.NpgsqlDbType.Timestamp, serverTime.ToString("yyyy-MM-dd HH:mm:ss.fff"));
-                cmd.Parameters.AddWithValue(":tick", serverTime.Ticks);
-                cmd.Parameters.AddWithValue(":ask", Symbol.Ask);
-                cmd.Parameters.AddWithValue(":bid", Symbol.Bid);
-                cmd.Parameters.AddWithValue(":spread", Symbol.Spread);
-                cmd.ExecuteNonQuery();
-            }
+            // Example: INSERT INTO public.audusd(utc, tick, ask, bid, spread) VALUES('2023-01-01 00:00:01.000', 2, 3, 4, 5)
+            string commandText = "INSERT INTO " + dbSchema + "." + Symbol.Name + " (utc, tick, ask, bid, spread) VALUES (";
+            commandText += "'" + serverTime.ToString("yyyy-MM-dd HH:mm:ss.fff") + "', ";
+            commandText += serverTime.Ticks.ToString() + ", ";
+            commandText += Symbol.Ask.ToString() + ", ";
+            commandText += Symbol.Bid.ToString() + ", ";
+            commandText += Symbol.Spread.ToString() + ")";
+            Print("SQL> " + commandText);
+            NpgsqlCommand cmd = dataSource.CreateCommand(commandText);
+            int execResult = cmd.ExecuteNonQuery();
+            Print("SQL query result: " + execResult.ToString() + " rows affected.");
+
             //
             // -- ON SCREEN DIAGNOSTICS --
             //
             // Index of the last/newest bar on chart
-            int barLast = MarketSeries.OpenTime.GetIndexByTime(MarketSeries.OpenTime.LastValue);
-            ChartObjects.DrawText("barLast", (barLast).ToString(), barLast, MarketSeries.High.LastValue + 0.0001);
+            int barLast = Bars.OpenTimes.GetIndexByTime(Bars.OpenTimes.LastValue);
+            Chart.DrawText("barLast", (barLast).ToString(), barLast, Bars.HighPrices.LastValue + 0.0001, Color.Azure);
             // Diagnostic text
             ++diagTicks;
-            if (diagTicks >= 4)
-                diagTicks = 0;
-            char ctick;
-            switch (diagTicks)
-            {
-                case 0:
-                    ctick = '-';
-                    break;
-                case 1:
-                    ctick = '\\';
-                    break;
-                case 2:
-                    ctick = '|';
-                    break;
-                case 3:
-                    ctick = '/';
-                    break;
-                default:
-                    ctick = '.';
-                    break;
-            }
-            string msg = diagTicks.ToString() + " " + ctick + Environment.NewLine;
-            msg = msg + Symbol.Code + ">" + " Ask: " + Symbol.Ask.ToString("0.00000") + " Bid: " + Symbol.Bid.ToString("0.00000") + " Spread: " + Symbol.Spread.ToString("0.00000") + Environment.NewLine;
-            ChartObjects.DrawText("diaginfo", msg, StaticPosition.TopLeft);
+            string msg = Symbol.Name + " " + " Ask: " + Symbol.Ask.ToString("0.00000") + " Bid: " + Symbol.Bid.ToString("0.00000");
+            msg += " Spread: " + Symbol.Spread.ToString("0.00000") + Environment.NewLine;
+            msg += "SQL command: " + commandText + Environment.NewLine;
+            msg += "SQL query result: " + execResult.ToString() + " rows affected." + Environment.NewLine;
+            msg += "Ticks: " + diagTicks.ToString();
+            // Draw text on the diagram
+            Chart.DrawStaticText("diaginfo", msg, VerticalAlignment.Top, HorizontalAlignment.Left, Color.White);
         }
 
-        /// <summary>
-        /// On Stop routine. Put your de-initialization logic here.
-        /// </summary>
+        // On Stop routine. Put your de-initialization logic here.
         protected override void OnStop()
         {
-            dbConn.Close();
-            Print("DB connection: " + dbConn.FullState.ToString());
         }
     }
 }
