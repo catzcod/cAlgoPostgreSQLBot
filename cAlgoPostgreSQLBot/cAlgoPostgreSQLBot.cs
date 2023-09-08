@@ -1,5 +1,4 @@
 using System;
-using System.Reflection.Metadata;
 using cAlgo.API;
 using cAlgo.API.Internals;
 using Npgsql;
@@ -10,17 +9,19 @@ namespace cAlgo
     public class PostgreSQL : Robot
     {
         // PostgreSQL connection settings
-        string dbName = "fxhistory";
-        string dbHost = "localhost";
-        int dbPort = 5432;
-        string dbUser = "test";
-        string dbPass = "test";
-        string dbSchema = "public";
+        private readonly string dbName = "fxhistory";
+        private readonly string dbHost = "localhost";
+        private readonly int dbPort = 5432;
+        private readonly string dbUser = "test";
+        private readonly string dbPass = "test";
+        private readonly string dbSchema = "public";
+
         //
         // Globals
         //
-        NpgsqlDataSource dataSource;
-        int diagTicks; // Diagnostic counter for ticks 1-2-3-4-1-2-etc
+        private NpgsqlDataSource dataSource;
+        private NpgsqlCommand cmd;
+        private int diagTicks; // Diagnostic counter for ticks
 
         // Prints exception details into cBot Log
         private void MyErrorHandler(Object sender, Exception ex, string myRoutine)
@@ -56,7 +57,7 @@ namespace cAlgo
                 // Example: SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'audusd')
                 string commandText = "SELECT EXISTS ( SELECT 1 FROM pg_tables WHERE schemaname = '" + dbSchema + "' AND tablename = '" + Symbol.Name.ToLower() + "')";
                 Print("SQL> " + commandText);
-                NpgsqlCommand cmd = dataSource.CreateCommand(commandText);
+                cmd = dataSource.CreateCommand(commandText);
                 bool tableExisting = (bool)cmd.ExecuteScalar();
                 Print("SQL query result: " + tableExisting.ToString());
                 if (!tableExisting)
@@ -64,6 +65,7 @@ namespace cAlgo
                     // Example: CREATE TABLE public.audusd ("id" bigserial, "utc" timestamp without time zone, "tick" bigint, "ask" real, "bid" real, "spread" real)
                     commandText = "CREATE TABLE " + dbSchema + "." + Symbol.Name.ToLower() + " (\"id\" bigserial, \"utc\" timestamp without time zone, \"tick\" bigint, \"ask\" real, \"bid\" real, \"spread\" real)";
                     Print("SQL> " + commandText);
+                    cmd = dataSource.CreateCommand(commandText);
                     int execResult = cmd.ExecuteNonQuery();
                     Print("SQL query result: " + execResult.ToString() + " rows affected.");
                 }
@@ -89,7 +91,7 @@ namespace cAlgo
             commandText += Symbol.Bid.ToString() + ", ";
             commandText += Symbol.Spread.ToString() + ")";
             Print("SQL> " + commandText);
-            NpgsqlCommand cmd = dataSource.CreateCommand(commandText);
+            cmd = dataSource.CreateCommand(commandText);
             int execResult = cmd.ExecuteNonQuery();
             Print("SQL query result: " + execResult.ToString() + " rows affected.");
 
@@ -105,7 +107,7 @@ namespace cAlgo
             msg += " Spread: " + Symbol.Spread.ToString("0.00000") + Environment.NewLine;
             msg += "SQL command: " + commandText + Environment.NewLine;
             msg += "SQL query result: " + execResult.ToString() + " rows affected." + Environment.NewLine;
-            msg += "Ticks: " + diagTicks.ToString();
+            msg += "Ticks: " + diagTicks.ToString() + Environment.NewLine;
             // Draw text on the diagram
             Chart.DrawStaticText("diaginfo", msg, VerticalAlignment.Top, HorizontalAlignment.Left, Color.White);
         }
